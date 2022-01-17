@@ -37,7 +37,7 @@ class Game(Base):
     home_team_id = Column(Integer, ForeignKey('home_team.id'))
     home_team = relationship('Team', back_populates='schedule')
     home_team_score = Column(Integer)
-    away_team_id = Column(Integer, ForeignKey('awa_team.id'))
+    away_team_id = Column(Integer, ForeignKey('away_team.id'))
     away_team = relationship('Team', back_populates='schedule')
     away_team_score = Column(Integer)
     plays = relationship('Play')

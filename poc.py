@@ -1,23 +1,28 @@
+from numpy import argmax
 import requests
 from bs4 import BeautifulSoup
 import json
 import pprint
+import re
 
 BASE_URL    = "https://www.espn.com/mens-college-basketball/team/{schedule,roster}/_/id/{team_id}/season/{year}"
-GAME_URL    = "https://www.espn.com/mens-college-basketball/game?gameId=401258866"
-PBP_URL     = "https://www.espn.com/mens-college-basketball/playbyplay?gameId=401265031"
-SCH_URL     = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/228/season/2020"
+GAME_URL    = "https://www.espn.com/mens-college-basketball/game/_/gameId/401258866"
+PBP_URL     = "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/401369935"
+SCH_URL     = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/228/season/2022"
 RST_URL     = "https://www.espn.com/mens-college-basketball/team/roster/_/id/228/season/2020"
+
+SCH_B_URL   = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/{}/season/{}" # team_id, year
+PBP_B_URL     = "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/{}" # game_id
 TEAMS_URL   = "https://www.espn.com/mens-college-basketball/teams"
 
-VERBOSE = True
+VERBOSE = False
 
 def get_teams():
     r = requests.get(TEAMS_URL)
     soup = BeautifulSoup(r.content, 'html5lib')
     table = soup.findAll('div', attrs={'class': 'mt7'})
     all_teams_by_conference = {}
-    
+
     for conference in table:
         name = conference.find('div', attrs={'class': 'headline headline pb4 n8 fw-heavy clr-gray-01'})
         name = name.get_text()
@@ -36,11 +41,11 @@ def get_teams():
 
     if VERBOSE:
         pprint.pprint(all_teams_by_conference)
-    
+
     return all_teams_by_conference
 
-def get_schedule():
-    r = requests.get(SCH_URL)
+def get_schedule(team_id, year):
+    r = requests.get(SCH_B_URL.format(team_id, year))
     soup = BeautifulSoup(r.content, 'html5lib')
     raw_games = soup.find_all('div', attrs={'class': 'flex items-center opponent-logo'})
     schedule = []
@@ -48,18 +53,31 @@ def get_schedule():
     for raw_game in raw_games:
         sections = raw_game.parent.parent.find_all('td', attrs={'class': 'Table__TD'})
         raw_game_span = raw_game.find_all('span')
-        opp_team_url = raw_game_span[-1].find('a')['href'].split('/')
+        span_a = raw_game_span[-1].find('a')
+        opp_id = span_a['href'].split('/')[-1] if span_a else None
+
         game_a = sections[2].find('a')
-        schedule.append({
+        results_span = sections[2].find_all('span')
+
+        game_dict = {
             'location': 'Home' if raw_game_span[0].get_text() == 'vs' else 'Away',
             'opponent': {
                 'name': raw_game_span[-1].get_text().strip(),
-                'id': opp_team_url[opp_team_url.index('id') + 1]
+                'id': opp_id
             },
             'date': sections[0].get_text(),
-            'id': game_a['href'].split('=')[1] if game_a else -1
-        })
-    
+            'id': game_a['href'].split('/')[-1] if game_a else -1
+        }
+
+        if not results_span or len(results_span) == 1:
+            game_dict['result'] = None
+            game_dict['score'] = None
+        else:
+            game_dict['result'] = results_span[0].text
+            game_dict['score'] = results_span[1].text.strip()
+
+        schedule.append(game_dict)
+
     if VERBOSE:
         pprint.pprint(schedule)
 
@@ -72,10 +90,11 @@ def get_action_from_play(action_text):
 
     if 'Official TV Timeout' in action_text:
         action = 'Official TV Timeout'
-    elif 'End of 1st half' in action_text:
-        action = 'End of 1st half'
-    elif 'End of Game' in action_text:
-        action = 'End of Game'
+    elif action_text.startswith('End of'):
+        action = action_text.strip()
+
+    elif action_text == 'null':
+        return player, action, assist
 
     elif 'made Three Point Jumper' in action_text:
         action = 'made Three Point Jumper'
@@ -140,20 +159,28 @@ def get_action_from_play(action_text):
     elif 'Foul on' in action_text:
         action = 'Foul'
         player = action_text.split('Foul on')[-1].strip()
-    
-    else:
-        print(f"{action_text} not handled")
-        exit(0)
+
+    #else:
+    #    print(f"{action_text} not handled")
+    #    raise Exception
 
     if 'Assisted by' in action_text:
         assist = action_text.split('Assisted by')[-1].strip()[:-1]
 
     return player, action, assist
 
-def get_plays():
-    r = requests.get(PBP_URL)
+def get_plays(game_id):
+    r = requests.get(PBP_B_URL.format(game_id))
     soup = BeautifulSoup(r.content, 'html5lib')
-    raw_halves = soup.find_all('div', attrs={'class': 'accordion-content'})[1:]
+    home_name = soup.find('div', attrs={'class': 'team home'})
+    home1 = home_name.find('span', attrs={'class': 'long-name'}).text
+    home2 = home_name.find('span', attrs={'class': 'short-name'}).text
+
+    away_name = soup.find('div', attrs={'class': 'team away'})
+    away1 = away_name.find('span', attrs={'class': 'long-name'}).text
+    away2 = away_name.find('span', attrs={'class': 'short-name'}).text
+
+    raw_halves = soup.find_all('div', attrs={'id': re.compile('gp-quarter*')})
     plays = []
     for half_num, raw_half in enumerate(raw_halves):
         raw_plays = raw_half.find('tbody').find_all('tr')
@@ -167,13 +194,16 @@ def get_plays():
             play['actor'] = player
             play['action'] = action
             play['assist'] = assist
+            away_score, home_score = map(int, play_cols[3].text.split(' - '))
+            play['away_score'] = away_score
+            play['home_score'] = home_score
 
             plays.append(play)
-    
+
     if VERBOSE:
         pprint.pprint(plays)
 
-    return plays
+    return plays, ' '.join([home1, home2]), ' '.join([away1, away2])
 
 def get_roster():
     r = requests.get(RST_URL)
@@ -202,7 +232,69 @@ def get_roster():
 # Main Runner #
 ###         ###
 if __name__ == '__main__':
-    # get_teams()
-    # get_schedule()
+    #sch = get_schedule(228, 2022)
     # get_roster()
-    get_plays()
+    #res = get_plays(401369133)
+    calculate = True
+    year = 2022
+
+    if calculate:
+        get_teams_call = get_teams()
+        teams = [team for conf in get_teams_call for team in get_teams_call[conf]]
+        results = []
+        for team in teams:
+            print(team['name'], len(results))
+            schedule = get_schedule(team['id'], year)
+            team_report = {
+                'id': team['id'],
+                'name': team['name'],
+                'deltas': [],
+                'gameids': [],
+            }
+            for game in schedule:
+                if game['result'] == 'L':
+
+                    pbp, home, away = get_plays(game['id'])
+                    if team['name'] == home:
+                        home_modifier = 1
+                        away_modifier = -1
+                    else:
+                        home_modifier = -1
+                        away_modifier = 1
+
+                    if len(pbp) == 0:
+                        print("skipping", game['id'])
+                        continue
+
+                    score_delta = []
+                    for play in pbp:
+                        h = play['home_score']
+                        a = play['away_score']
+                        score_delta.append({
+                            'delta': h * home_modifier + a * away_modifier,
+                            'home_score': h,
+                            'away_score': a
+                        })
+
+                    team_report['deltas'].append(max(score_delta, key=lambda x: x['delta']))
+                    team_report['gameids'].append(game['id'])
+
+            if len(team_report['deltas']) == 0:
+                team_report['worst_delta'] = 0
+                team_report['worst_gameid'] = 0
+            else:
+                worst = max(team_report['deltas'], key=lambda x: x['delta'])
+                worst_index = team_report['deltas'].index(worst)
+                team_report['worst_delta'] = worst
+                team_report['worst_gameid'] = team_report['gameids'][worst_index]
+                team_report['worst_situation'] = f"{team_report['deltas'][worst_index]['away_score']} - {team_report['deltas'][worst_index]['home_score']}"
+
+            results.append(team_report)
+
+        with open(f"{year - 1}-{year}-2.json", "w") as fp:
+            json.dump(results, fp)
+
+# worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
+# avg_largest_margin = sorted(results, key=lambda x: sum(y['delta'] for y in x['deltas'])/len(x['deltas']), reverse=True)
+# biggest_losers = avg_largest_margin[:20]
+# for index, team in enumerate(sorted(biggest_losers, key=lambda x: sum(y['delta'] > 0 for y in x['deltas'])))
