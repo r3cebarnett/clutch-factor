@@ -1,9 +1,10 @@
-from numpy import argmax
 import requests
 from bs4 import BeautifulSoup
 import json
 import pprint
 import re
+import time
+import requests_cache
 
 BASE_URL    = "https://www.espn.com/mens-college-basketball/team/{schedule,roster}/_/id/{team_id}/season/{year}"
 GAME_URL    = "https://www.espn.com/mens-college-basketball/game/_/gameId/401258866"
@@ -17,8 +18,20 @@ TEAMS_URL   = "https://www.espn.com/mens-college-basketball/teams"
 
 VERBOSE = False
 
+requests_cache.install_cache("espn_api", backend="sqlite", expire_after=30*86400) # expire after 30 days
+
+def get_request(url):
+    r = requests.get(url)
+    while r.status_code == 503:
+        time.sleep(1)
+        r = requests.get(url)
+
+    return r
+
 def get_teams():
-    r = requests.get(TEAMS_URL)
+    with requests_cache.disabled():
+        r = get_request(TEAMS_URL)
+
     soup = BeautifulSoup(r.content, 'html5lib')
     table = soup.findAll('div', attrs={'class': 'mt7'})
     all_teams_by_conference = {}
@@ -45,7 +58,9 @@ def get_teams():
     return all_teams_by_conference
 
 def get_schedule(team_id, year):
-    r = requests.get(SCH_B_URL.format(team_id, year))
+    with requests_cache.disabled():
+        r = get_request(SCH_B_URL.format(team_id, year))
+
     soup = BeautifulSoup(r.content, 'html5lib')
     raw_games = soup.find_all('div', attrs={'class': 'flex items-center opponent-logo'})
     schedule = []
@@ -170,7 +185,8 @@ def get_action_from_play(action_text):
     return player, action, assist
 
 def get_plays(game_id):
-    r = requests.get(PBP_B_URL.format(game_id))
+    r = get_request(PBP_B_URL.format(game_id))
+
     soup = BeautifulSoup(r.content, 'html5lib')
     home_name = soup.find('div', attrs={'class': 'team home'})
     home1 = home_name.find('span', attrs={'class': 'long-name'}).text
@@ -206,7 +222,7 @@ def get_plays(game_id):
     return plays, ' '.join([home1, home2]), ' '.join([away1, away2])
 
 def get_roster():
-    r = requests.get(RST_URL)
+    r = get_request(RST_URL)
     soup = BeautifulSoup(r.content, 'html5lib')
 
     roster = []
@@ -236,7 +252,7 @@ if __name__ == '__main__':
     # get_roster()
     #res = get_plays(401369133)
     calculate = True
-    year = 2022
+    year = 2019
 
     if calculate:
         get_teams_call = get_teams()
@@ -291,7 +307,7 @@ if __name__ == '__main__':
 
             results.append(team_report)
 
-        with open(f"{year - 1}-{year}-2.json", "w") as fp:
+        with open(f"{year - 1}-{year}-3.json", "w") as fp:
             json.dump(results, fp)
 
 # worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
