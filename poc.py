@@ -252,7 +252,8 @@ if __name__ == '__main__':
     # get_roster()
     #res = get_plays(401369133)
     calculate = True
-    year = 2019
+    year = 2022
+    print(f"Calculating for {year - 1}-{year}")
 
     if calculate:
         get_teams_call = get_teams()
@@ -309,6 +310,18 @@ if __name__ == '__main__':
 
         with open(f"{year - 1}-{year}-3.json", "w") as fp:
             json.dump(results, fp)
+
+        worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
+        print("WORST LOSS RANKING")
+        for i, g in enumerate(worst_loss[:10]):
+            print(i + 1, g['worst_delta']['delta'], g['worst_gameid'])
+        print()
+
+        avg_largest_margin = sorted(results, key=lambda x: sum(y['delta'] for y in x['deltas']) / len(x['deltas']), reverse=True)
+        print("AVERAGE BLOWN LEAD")
+        for i, g in enumerate(avg_largest_margin[:20]):
+            print(i + 1, sum(y['delta'] for y in g['deltas']) / len(g['deltas']))
+        print()
 
 # worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
 # avg_largest_margin = sorted(results, key=lambda x: sum(y['delta'] for y in x['deltas'])/len(x['deltas']), reverse=True)
