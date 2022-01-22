@@ -320,7 +320,7 @@ if __name__ == '__main__':
         avg_largest_margin = sorted(results, key=lambda x: sum(y['delta'] for y in x['deltas']) / len(x['deltas']), reverse=True)
         print("AVERAGE BLOWN LEAD")
         for i, g in enumerate(avg_largest_margin[:20]):
-            print(i + 1, sum(y['delta'] for y in g['deltas']) / len(g['deltas']))
+            print(i + 1, f"{sum(y['delta'] for y in g['deltas']) / len(g['deltas']):.2f}", f"out of {len(g['deltas'])} games")
         print()
 
 # worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
