@@ -21,12 +21,15 @@ VERBOSE = False
 requests_cache.install_cache("espn_api", backend="sqlite", expire_after=30*86400) # expire after 30 days
 
 def get_request(url):
-    r = requests.get(url)
-    while r.status_code == 503:
-        time.sleep(1)
+    try:
         r = requests.get(url)
+        while r.status_code == 503:
+            time.sleep(1)
+            r = requests.get(url)
 
-    return r
+        return r
+    except:
+        return get_request(url)
 
 def get_teams():
     with requests_cache.disabled():
@@ -252,21 +255,21 @@ if __name__ == '__main__':
     # get_roster()
     #res = get_plays(401369133)
     calculate = True
-    year = 2022
+    year = 2017
     print(f"Calculating for {year - 1}-{year}")
 
     if calculate:
         get_teams_call = get_teams()
         teams = [team for conf in get_teams_call for team in get_teams_call[conf]]
         results = []
-        for team in teams:
-            print(team['name'], len(results))
+        all_blown = []
+        for team_num, team in enumerate(teams):
+            print(team['name'], team_num)
             schedule = get_schedule(team['id'], year)
             team_report = {
                 'id': team['id'],
                 'name': team['name'],
                 'deltas': [],
-                'gameids': [],
             }
             for game in schedule:
                 if game['result'] == 'L':
@@ -293,34 +296,38 @@ if __name__ == '__main__':
                             'away_score': a
                         })
 
-                    team_report['deltas'].append(max(score_delta, key=lambda x: x['delta']))
-                    team_report['gameids'].append(game['id'])
+                    team_report['deltas'].append({
+                        'home_team': home,
+                        'away_team': away,
+                        'situation': max(score_delta, key=lambda x: x['delta']),
+                        'gameid': game['id']
+                    })
 
             if len(team_report['deltas']) == 0:
                 team_report['worst_delta'] = 0
                 team_report['worst_gameid'] = 0
+                continue
             else:
-                worst = max(team_report['deltas'], key=lambda x: x['delta'])
+                worst = max(team_report['deltas'], key=lambda x: x['situation']['delta'])
                 worst_index = team_report['deltas'].index(worst)
-                team_report['worst_delta'] = worst
-                team_report['worst_gameid'] = team_report['gameids'][worst_index]
-                team_report['worst_situation'] = f"{team_report['deltas'][worst_index]['away_score']} - {team_report['deltas'][worst_index]['home_score']}"
+                team_report['worst_situation'] = worst
 
             results.append(team_report)
+            all_blown.extend(team_report['deltas'])
 
         with open(f"{year - 1}-{year}-3.json", "w") as fp:
             json.dump(results, fp)
 
-        worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
-        print("WORST LOSS RANKING")
+        worst_loss = sorted(all_blown, key=lambda x: x['situation']['delta'], reverse=True)
+        print("WORST BLOWN LEAD")
         for i, g in enumerate(worst_loss[:10]):
-            print(i + 1, g['worst_delta']['delta'], g['worst_gameid'])
+            print(f"{i + 1} - {g['situation']['delta']} ({g['away_team']} {g['situation']['away_score']} - {g['situation']['home_score']} {g['home_team']})")
         print()
 
-        avg_largest_margin = sorted(results, key=lambda x: sum(y['delta'] for y in x['deltas']) / len(x['deltas']), reverse=True)
+        avg_largest_margin = sorted(results, key=lambda x: sum(y['situation']['delta'] for y in x['deltas']) / len(x['deltas']), reverse=True)
         print("AVERAGE BLOWN LEAD")
         for i, g in enumerate(avg_largest_margin[:20]):
-            print(i + 1, f"{sum(y['delta'] for y in g['deltas']) / len(g['deltas']):.2f}", f"out of {len(g['deltas'])} games")
+            print(i + 1, '-', g['name'], f"{sum(y['situation']['delta'] for y in g['deltas']) / len(g['deltas']):.2f}", f"out of {len(g['deltas'])} games")
         print()
 
 # worst_loss = sorted(results, key=lambda x: x['worst_delta']['delta'], reverse=True)
