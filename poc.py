@@ -6,34 +6,43 @@ import re
 import time
 import requests_cache
 
-BASE_URL    = "https://www.espn.com/mens-college-basketball/team/{schedule,roster}/_/id/{team_id}/season/{year}"
+BASE_URL = "https://www.espn.com/"
+
+CFB_URL = BASE_URL + "college-football/"
+CFB_TEAMS_URL = CFB_URL + "teams"
+CFB_SCH_B_URL = CFB_URL + "team/schedule/_/id/{}/season/{}" # team_id, year
+CFB_PBP_B_URL = CFB_URL + "playbyplay/_/gameId/{}" # game_id
+
+NCAAM_URL = BASE_URL + "mens-college-basketball/"
+NCAAM_TEAMS_URL   = NCAAM_URL + "teams"
+NCAAM_SCH_B_URL   = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/{}/season/{}" # team_id, year
+NCAAM_PBP_B_URL     = "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/{}" # game_id
+
+#BASE_URL    = "https://www.espn.com/mens-college-basketball/team/{schedule,roster}/_/id/{team_id}/season/{year}"
 GAME_URL    = "https://www.espn.com/mens-college-basketball/game/_/gameId/401258866"
 PBP_URL     = "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/401369935"
 SCH_URL     = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/228/season/2022"
 RST_URL     = "https://www.espn.com/mens-college-basketball/team/roster/_/id/228/season/2020"
-
-SCH_B_URL   = "https://www.espn.com/mens-college-basketball/team/schedule/_/id/{}/season/{}" # team_id, year
-PBP_B_URL     = "https://www.espn.com/mens-college-basketball/playbyplay/_/gameId/{}" # game_id
-TEAMS_URL   = "https://www.espn.com/mens-college-basketball/teams"
 
 VERBOSE = False
 
 requests_cache.install_cache("espn_api", backend="sqlite", expire_after=30*86400) # expire after 30 days
 
 def get_request(url):
-    try:
-        r = requests.get(url)
-        while r.status_code == 503:
-            time.sleep(1)
-            r = requests.get(url)
+    r = requests.get(url, timeout=5, headers= {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.142 Safari/537.36'
+    })
 
-        return r
-    except:
-        return get_request(url)
+    while r.status_code == 503:
+        time.sleep(1)
+        r = requests.get(url, timeout=5, headers= {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.142 Safari/537.36'
+        })
+
+    return r
 
 def get_teams():
-    with requests_cache.disabled():
-        r = get_request(TEAMS_URL)
+    r = get_request(CFB_TEAMS_URL)
 
     soup = BeautifulSoup(r.content, 'html5lib')
     table = soup.findAll('div', attrs={'class': 'mt7'})
@@ -62,7 +71,7 @@ def get_teams():
 
 def get_schedule(team_id, year):
     with requests_cache.disabled():
-        r = get_request(SCH_B_URL.format(team_id, year))
+        r = get_request(CFB_SCH_B_URL.format(team_id, year))
 
     soup = BeautifulSoup(r.content, 'html5lib')
     raw_games = soup.find_all('div', attrs={'class': 'flex items-center opponent-logo'})
@@ -101,7 +110,7 @@ def get_schedule(team_id, year):
 
     return schedule
 
-def get_action_from_play(action_text):
+def get_action_from_play_ncaam(action_text):
     player = None
     action = None
     assist = None
@@ -187,8 +196,35 @@ def get_action_from_play(action_text):
 
     return player, action, assist
 
+# list of drives, away team, home team
+def get_drives(game_id):
+    #game_id = 401525468
+    r = get_request(CFB_PBP_B_URL.format(game_id))
+    drives = []
+
+    if not r:
+        return drives, None, None
+
+    soup = BeautifulSoup(r.content, 'html5lib')
+    away_block = soup.find('div', attrs={'class': 'Gamestrip__Team--away'})
+    away_name = away_block.find('h2').text
+
+    home_block = soup.find('div', attrs={'class': 'Gamestrip__Team--home'})
+    home_name = home_block.find('h2').text
+
+    raw_drives = soup.find_all('div', attrs={'class': 'AccordionHeader'})
+    for drive_num, raw_drive in enumerate(raw_drives):
+        drive = {}
+        drive['result'] = raw_drive.find('span', attrs={'class': 'AccordionHeader__Left__Drives__Headline'}).text
+        drive['team'] = 'away' if raw_drive.find('img').attrs['alt'] == away_name else 'home'
+        drive['away_score'] = int(raw_drive.find('span', attrs={'class': 'AccordionHeader__Right__AwayTeam__Score'}).text)
+        drive['home_score'] = int(raw_drive.find('span', attrs={'class': 'AccordionHeader__Right__HomeTeam__Score'}).text)
+        drives.append(drive)
+
+    return drives, away_name, home_name
+
 def get_plays(game_id):
-    r = get_request(PBP_B_URL.format(game_id))
+    r = get_request(CFB_PBP_B_URL.format(game_id))
 
     soup = BeautifulSoup(r.content, 'html5lib')
     home_name = soup.find('div', attrs={'class': 'team home'})
@@ -251,6 +287,108 @@ def get_roster():
 # Main Runner #
 ###         ###
 if __name__ == '__main__':
+    VERBOSE = False
+    CALCULATE = True
+    year = 2016
+    print("Calculating for", year)
+
+    if CALCULATE:
+        get_teams_call = get_teams()
+        all_teams = [team for conf, teams in get_teams_call.items() for team in teams]
+        all_reports = []
+        for team_num, team in enumerate(all_teams):
+            #if VERBOSE:
+            print(team['name'], team_num)
+            schedule = get_schedule(team['id'], year)
+            team_report = {
+                'id': team['id'],
+                'name': team['name'],
+                'opp_pots': [],
+            }
+
+            for game in schedule:
+                if game['id'] == -1:
+                    continue
+                drives, away, home = get_drives(game['id'])
+                if len(drives) == 0:
+                    continue
+
+                this_team, that_team = ('away', 'home') if away == team['name'] else ('home', 'away')
+                pots = 0
+                for drive_num, drive in enumerate(drives):
+                    eligible = False
+                    if drive['team'] != this_team and drive['result'] in ['Field Goal', 'Touchdown', 'Safety']:
+                        # Check if previous drive ended in a fumble from the other team
+                        if drive_num - 1 >= 0 and drives[drive_num - 1]['result'] in ['Fumble', 'Interception', 'Downs']:
+                            eligible = True
+
+                    elif drive['team'] == this_team and drive['result'] in ['Interception Touchdown', 'Fumble Return Touchdown']:
+                        # Go ahead and add it up!
+                        eligible = True
+
+                    if eligible:
+                        if drive['result'] in ['Interception Touchdown', 'Fumble Return Touchdown', 'Touchdown']:
+                            new_res = 7
+                        elif drive['result'] == 'Field Goal':
+                            new_res = 3
+                        elif drive['result'] == 'Safety':
+                            new_res = 2
+                        else:
+                            print('unknown situation!!')
+                            breakpoint()
+
+                        if VERBOSE:
+                            print('\t\t', 'Drive', drive_num, new_res)
+                        pots += new_res
+
+                    if 0:
+                        prior_score = 0
+                        if drive_num != 0:
+                            prior_score = drives[drive_num - 1][that_team + '_score']
+                        new_score = drive[that_team + '_score']
+                        if new_score < prior_score:
+                            prior_score = 0
+                        elif new_score == prior_score:
+                            try:
+                                new_score = drives[drive_num + 1][that_team + '_score']
+                            except IndexError:
+                                # have to assume..
+                                if drive['result'] == 'Touchdown':
+                                    new_score = prior_score + 7
+                                elif drive['result'] == 'Field Goal':
+                                    new_score = prior_score + 3
+                                elif drive['result'] == 'Safety':
+                                    new_score = prior_score + 2
+
+                        new_res = new_score - prior_score
+                        if VERBOSE:
+                            print('\t\t', 'Drive', drive_num, new_res)
+                        pots += new_res
+
+                #if away == 'Clemson Tigers' and home == 'Miami Hurricanes':
+                #    breakpoint()
+                if VERBOSE:
+                    print('\t', pots, away, home)
+                team_report['opp_pots'].append(pots)
+
+            all_reports.append(team_report)
+
+        stats = []
+        for report in all_reports:
+            stat = {}
+            stat['name'] = report['name']
+            stat['sum'] = sum(report['opp_pots'])
+            stat['num_games'] = len(report['opp_pots'])
+            stat['ppg'] = stat['sum'] / stat['num_games'] if stat['num_games'] else -1
+            stats.append(stat)
+
+        most_pots = sorted(stats, key=lambda x: x['ppg'], reverse=True)
+        print("MOST OPP POTS")
+        for i, g in enumerate(most_pots):
+            print(f"{i + 1} - {g['name']} - {g['ppg']} ppg")
+
+
+if __name__ == '__main2__':
     #sch = get_schedule(228, 2022)
     # get_roster()
     #res = get_plays(401369133)
