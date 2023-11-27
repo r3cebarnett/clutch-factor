@@ -287,9 +287,9 @@ def get_roster():
 # Main Runner #
 ###         ###
 if __name__ == '__main__':
-    VERBOSE = False
+    VERBOSE = True
     CALCULATE = True
-    year = 2016
+    year = 2023
     print("Calculating for", year)
 
     if CALCULATE:
@@ -297,6 +297,8 @@ if __name__ == '__main__':
         all_teams = [team for conf, teams in get_teams_call.items() for team in teams]
         all_reports = []
         for team_num, team in enumerate(all_teams):
+            if team['name'] != 'Clemson Tigers':
+                continue
             #if VERBOSE:
             print(team['name'], team_num)
             schedule = get_schedule(team['id'], year)
@@ -372,6 +374,7 @@ if __name__ == '__main__':
                 team_report['opp_pots'].append(pots)
 
             all_reports.append(team_report)
+            #print(json.dumps(team_report, indent=2))
 
         stats = []
         for report in all_reports:
